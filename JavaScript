@@ -1,0 +1,234 @@
+(() => {
+  // encapsulated scope
+  let totalSeats = 20;
+
+  function getPeople() {
+    const raw = document.getElementById('names').value.trim();
+    return raw ? raw.split(/\n+/).map(x => x.trim()).filter(Boolean) : [];
+  }
+
+  function generateSeats() {
+    const rows = parseInt(document.getElementById('rows').value) || 1;
+    const cols = parseInt(document.getElementById('cols').value) || 1;
+    totalSeats = rows * cols;
+
+    const grid = document.getElementById('seat-grid');
+    grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+    grid.innerHTML = '';
+
+    for (let i = 1; i <= totalSeats; i++) {
+      const div = document.createElement('div');
+      div.className = 'seat';
+      div.dataset.index = i-1; // 0-based
+      div.innerHTML = ` <div class='seat-number'>座位 ${i}</div> <div id='seat-${i}' class='assigned'>(空)</div>`;
+      grid.appendChild(div);
+    }
+  }
+
+  function shuffleArray(arr) {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  function parseBanPairs(text) {
+    if (!text) return [];
+    return text.split(/[;\n]+/).map(group => group.split(/,|，/).map(s=>s.trim()).filter(Boolean)).filter(arr=>arr.length>=2);
+  }
+
+  function parseMustGroups(text) {
+    if (!text) return [];
+    return text.split(/[;\n]+/).map(group => group.split(/,|，/).map(s=>s.trim()).filter(Boolean)).filter(arr=>arr.length>=1);
+  }
+
+  function indexToRC(index, cols) {
+    return { r: Math.floor(index/cols), c: index % cols };
+  }
+
+  function manhattan(i, j, cols) {
+    const a = indexToRC(i, cols), b = indexToRC(j, cols);
+    return Math.abs(a.r - b.r) + Math.abs(a.c - b.c);
+  }
+
+  function areConnected(indices, cols) {
+    // indices: array of indices; check if they form a connected component using 4-neighbor adjacency
+    if (indices.length <= 1) return true;
+    const set = new Set(indices);
+    const visited = new Set();
+    const stack = [indices[0]];
+    visited.add(indices[0]);
+    while (stack.length) {
+      const cur = stack.pop();
+      // neighbors: cur-1, cur+1, cur-cols, cur+cols
+      const neighbors = [cur-1, cur+1, cur-cols, cur+cols];
+      for (const n of neighbors) {
+        if (set.has(n) && !visited.has(n)) {
+          visited.add(n); stack.push(n);
+        }
+      }
+    }
+    return visited.size === set.size;
+  }
+
+  function checkConstraints(arr) {
+    // arr is array of assigned names in seat order
+    const rows = parseInt(document.getElementById('rows').value) || 1;
+    const cols = parseInt(document.getElementById('cols').value) || 1;
+    const banPairs = parseBanPairs(document.getElementById('banTogether').value);
+    const banMode = document.getElementById('banMode').value;
+    const adjacentMode = document.getElementById('adjacentMode').value; // '4' or '2'
+
+    for (const pair of banPairs) {
+      // only consider first two names in each pair
+      const [a,b] = pair;
+      if (!a || !b) continue;
+      const posA = arr.indexOf(a);
+      const posB = arr.indexOf(b);
+      if (posA === -1 || posB === -1) continue; // missing -> ok
+
+      if (banMode === 'anywhere') return false; // if both present anywhere
+      if (banMode === 'sameRow') {
+        if (Math.floor(posA/cols) === Math.floor(posB/cols)) return false;
+      }
+      if (banMode === 'adjacent') {
+        const dist = manhattan(posA, posB, cols);
+        if (adjacentMode === '2') {
+          // only horizontal neighbors: same row and abs(c diff)==1
+          if (Math.floor(posA/cols) === Math.floor(posB/cols) && Math.abs((posA%cols)-(posB%cols))===1) return false;
+        } else {
+          if (dist === 1) return false;
+        }
+      }
+    }
+
+    const mustGroups = parseMustGroups(document.getElementById('mustTogether').value);
+    const mustMode = document.getElementById('mustMode').value;
+    for (const group of mustGroups) {
+      const positions = group.map(name => arr.indexOf(name)).filter(p=>p!==-1);
+      if (positions.length !== group.length) return false; // some member missing
+      if (mustMode === 'sameRow') {
+        const row = Math.floor(positions[0]/cols);
+        if (!positions.every(p => Math.floor(p/cols) === row)) return false;
+      }
+      if (mustMode === 'adjacent') {
+        // require connected block via 4-neighbor adjacency
+        if (!areConnected(positions, cols)) return false;
+      }
+    }
+
+    return true;
+  }
+
+  function assignToSeats(shuffled) {
+    for (let i = 1; i <= totalSeats; i++) {
+      const seatEl = document.getElementById(`seat-${i}`);
+      if (!seatEl) continue;
+      seatEl.textContent = shuffled[i-1] || '(空)';
+      const parent = seatEl.parentElement;
+      parent.classList.add('animate');
+      setTimeout(()=>parent.classList.remove('animate'), 420);
+    }
+  }
+
+  function randomizeSeatsAnimated() {
+    const people = getPeople();
+    if (people.length < totalSeats) { alert('學生數量少於座位數！'); return; }
+
+    let shuffled; let attempts = 0; const maxAttempts = 5000;
+    do { shuffled = shuffleArray(people); attempts++; } while(!checkConstraints(shuffled) && attempts < maxAttempts);
+    if (attempts >= maxAttempts) { alert('無法在合理次數內找到符合限制的排列。請放寬條件或檢查名單。'); return; }
+
+    // animated reveal: highlight each seat briefly and then assign final names
+    const seats = Array.from(document.querySelectorAll('.seat'));
+    let i = 0;
+    const interval = setInterval(()=>{
+      seats.forEach(s=> s.style.transform='scale(1)');
+      if (seats[i]) seats[i].style.transform='scale(1.06)';
+      i++;
+      if (i > seats.length) { clearInterval(interval); assignToSeats(shuffled); }
+    }, 55);
+  }
+
+  function reshuffleAnimation() {
+    const seats = Array.from(document.querySelectorAll('.seat'));
+    seats.forEach((el)=> el.style.transform = `translateY(${Math.random()*8-4}px) rotate(${Math.random()*4-2}deg)`);
+    setTimeout(()=>{ seats.forEach(el=> el.style.transform=''); randomizeSeatsAnimated(); }, 300);
+  }
+
+  async function exportPDF() {
+    const grid = document.getElementById('seat-grid');
+    const stage = document.getElementById('stage');
+    // create a clone to include stage + grid nicely
+    const wrapper = document.createElement('div');
+    wrapper.style.background = '#fff';
+    wrapper.style.padding = '20px';
+    wrapper.style.width = (grid.offsetWidth + 40) + 'px';
+    const stageClone = stage.cloneNode(true);
+    const gridClone = grid.cloneNode(true);
+    gridClone.style.marginTop = '8px';
+    wrapper.appendChild(stageClone); wrapper.appendChild(gridClone);
+
+    document.body.appendChild(wrapper);
+    try {
+      const canvas = await html2canvas(wrapper, { scale: 2 });
+      const imgData = canvas.toDataURL('image/png');
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: [canvas.width, canvas.height] });
+      pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+      pdf.save('seating-chart.pdf');
+    } catch (err) { console.error(err); alert('匯出 PDF 發生錯誤'); }
+    document.body.removeChild(wrapper);
+  }
+
+  async function exportImage() {
+    const grid = document.getElementById('seat-grid');
+    const stage = document.getElementById('stage');
+    const wrapper = document.createElement('div');
+    wrapper.style.background = '#fff'; wrapper.style.padding = '20px'; wrapper.style.display='inline-block';
+    wrapper.appendChild(stage.cloneNode(true)); wrapper.appendChild(grid.cloneNode(true));
+    document.body.appendChild(wrapper);
+    try {
+      const canvas = await html2canvas(wrapper, { scale: 2 });
+      const data = canvas.toDataURL('image/png');
+      const a = document.createElement('a'); a.href = data; a.download = 'seating-chart.png'; a.click();
+    } catch (err) { console.error(err); alert('匯出圖檔發生錯誤'); }
+    document.body.removeChild(wrapper);
+  }
+
+  function setupExcelImport() {
+    const excelInput = document.getElementById('excel');
+    if (!excelInput) return;
+    excelInput.addEventListener('change', (e)=>{
+      const file = e.target.files[0]; if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(evt){
+        try {
+          const data = new Uint8Array(evt.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const sheet = workbook.Sheets[workbook.SheetNames[0]];
+          const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+          const names = rows.map(r => r[0]).filter(Boolean);
+          document.getElementById('names').value = names.join('\n');
+        } catch (err) { console.error(err); alert('讀取 Excel 發生錯誤，請確認檔案格式與內容。'); }
+      };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  // wire up buttons once DOM is ready
+  document.addEventListener('DOMContentLoaded', ()=>{
+    document.getElementById('btnCreate').addEventListener('click', generateSeats);
+    document.getElementById('btnRandom').addEventListener('click', randomizeSeatsAnimated);
+    document.getElementById('btnReshuffle').addEventListener('click', reshuffleAnimation);
+    document.getElementById('btnExportPDF').addEventListener('click', exportPDF);
+    document.getElementById('btnExportImg').addEventListener('click', exportImage);
+    setupExcelImport();
+    generateSeats();
+  });
+
+  // expose for debugging
+  window.__seatRandomizer = { generateSeats, randomizeSeatsAnimated, reshuffleAnimation };
+})();
